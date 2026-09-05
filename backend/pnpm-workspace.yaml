@@ -1,0 +1,7 @@
+allowBuilds:
+  esbuild: true
+minimumReleaseAgeExclude:
+  - '@ai-sdk/gateway@4.0.73'
+  - ai@7.0.91
+onlyBuiltDependencies:
+  - esbuild

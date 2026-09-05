@@ -1,0 +1,72 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "postinstall": "prisma generate",
+    "dev": "nodemon",
+    "build": "tsup src/index.ts --format cjs --out-dir dist && cp ./package.json ./dist",
+    "start": "node dist/index.js",
+    "seed:categories": "ts-node --transpile-only src/seeds/category.seed.ts",
+    "seed:products": "ts-node --transpile-only src/seeds/product.seed.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "prisma:studio": "prisma studio",
+    "test:ai-tools": "ts-node --transpile-only src/tests/ai/ai-shopping-tools.test.ts",
+    "test:ai-chat": "ts-node --transpile-only src/tests/ai/ai-chat.test.ts",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "11.22.0",
+      "onFail": "download"
+    }
+  },
+  "dependencies": {
+    "@ai-sdk/groq": "^4.0.37",
+    "@prisma/client": "^6.3.1",
+    "@types/streamifier": "^0.1.2",
+    "ai": "^7.0.91",
+    "bcryptjs": "^3.0.3",
+    "cloudinary": "^2.11.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.3.0",
+    "passport": "^0.7.0",
+    "passport-jwt": "^4.0.1",
+    "slugify": "^1.6.9",
+    "streamifier": "^0.1.1",
+    "stripe": "^22.6.1",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/bcryptjs": "^3.0.0",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/multer": "^2.2.0",
+    "@types/node": "^26.4.1",
+    "@types/passport": "^1.0.17",
+    "@types/passport-jwt": "^4.0.1",
+    "eslint": "^10.9.1",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.12.0",
+    "nodemon": "^3.1.14",
+    "prettier": "^3.9.6",
+    "prisma": "^6.3.1",
+    "ts-node": "^10.9.2",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.69.0"
+  }
+}
