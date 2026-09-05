@@ -1,0 +1,11 @@
+import { relations } from 'drizzle-orm';
+import { users, addresses, categories, products, carts, cartItems, orders, orderItems, reviews } from './schema';
+export const usersRelations = relations(users, ({ many }) => ({ addresses: many(addresses), products: many(products), carts: many(carts), orders: many(orders), reviews: many(reviews) }));
+export const addressesRelations = relations(addresses, ({ one }) => ({ user: one(users, { fields: [addresses.userId], references: [users._id] }) }));
+export const categoriesRelations = relations(categories, ({ many }) => ({ products: many(products) }));
+export const productsRelations = relations(products, ({ one, many }) => ({ user: one(users, { fields: [products.userId], references: [users._id] }), category: one(categories, { fields: [products.categoryId], references: [categories._id] }), cartItems: many(cartItems), orderItems: many(orderItems), reviews: many(reviews) }));
+export const cartsRelations = relations(carts, ({ one, many }) => ({ user: one(users, { fields: [carts.userId], references: [users._id] }), items: many(cartItems) }));
+export const cartItemsRelations = relations(cartItems, ({ one }) => ({ cart: one(carts, { fields: [cartItems.cartId], references: [carts._id] }), product: one(products, { fields: [cartItems.productId], references: [products._id] }) }));
+export const ordersRelations = relations(orders, ({ one, many }) => ({ user: one(users, { fields: [orders.userId], references: [users._id] }), items: many(orderItems), reviews: many(reviews) }));
+export const orderItemsRelations = relations(orderItems, ({ one }) => ({ order: one(orders, { fields: [orderItems.orderId], references: [orders._id] }), product: one(products, { fields: [orderItems.productId], references: [products._id] }), review: one(reviews) }));
+export const reviewsRelations = relations(reviews, ({ one }) => ({ user: one(users, { fields: [reviews.userId], references: [users._id] }), order: one(orders, { fields: [reviews.orderId], references: [orders._id] }), orderItem: one(orderItems, { fields: [reviews.orderItemId], references: [orderItems._id] }), product: one(products, { fields: [reviews.productId], references: [products._id] }) }));

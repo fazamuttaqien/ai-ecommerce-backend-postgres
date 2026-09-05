@@ -1,10 +1,8 @@
-import { prisma } from '../config/database.config';
+import { asc, eq } from 'drizzle-orm';
+import { db } from '../db';
+import { categories } from '../db/schema';
 
 export const getCategoriesService = async () => {
-  const categories = await prisma.category.findMany({
-    where: { isActive: true },
-    orderBy: { createdAt: 'asc' },
-  });
-
-  return { categories };
+  const result = await db.select().from(categories).where(eq(categories.isActive, true)).orderBy(asc(categories.createdAt));
+  return { categories: result };
 };

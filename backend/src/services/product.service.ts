@@ -1,323 +1,78 @@
 import slugify from 'slugify';
-import { prisma } from '../config/database.config';
+import { and, asc, count, desc, eq, gt, ilike, gte, lte, ne, or } from 'drizzle-orm';
+import { db } from '../db';
+import { categories, products, reviews, users } from '../db/schema';
 import { calculateSalePrice } from '../utils/price.util';
 import { isValidId } from '../utils/id.util';
-import {
-  GetProductsInput,
-  GetDealsInput,
-  GetProductBySlugInput,
-  GetProductReviewsInput,
-  CreateProductInput,
-  GetProductsForAdminInput,
-} from '../validators/product.validator';
+import { GetProductsInput, GetDealsInput, GetProductBySlugInput, GetProductReviewsInput, CreateProductInput, GetProductsForAdminInput } from '../validators/product.validator';
 import { BadRequestException, NotFoundException } from '../utils/app-error';
-import type { Prisma } from '@prisma/client';
 
-const PRODUCT_LIST_SELECT = {
-  _id: true,
-  name: true,
-  slug: true,
-  images: true,
-  unit: true,
-  originalPrice: true,
-  salePrice: true,
-  discountPercent: true,
-  discountLabel: true,
-  stockCount: true,
-  ratingAverage: true,
-  reviewCount: true,
-  categoryId: true,
-  category: { select: { _id: true, name: true, slug: true } },
-} satisfies Prisma.ProductSelect;
+const productListColumns = { _id: products._id, name: products.name, slug: products.slug, images: products.images, unit: products.unit, originalPrice: products.originalPrice, salePrice: products.salePrice, discountPercent: products.discountPercent, discountLabel: products.discountLabel, stockCount: products.stockCount, ratingAverage: products.ratingAverage, reviewCount: products.reviewCount, categoryId: products.categoryId };
+const categoryShape = { _id: categories._id, name: categories.name, slug: categories.slug };
 
 export const getProductsService = async (query: GetProductsInput) => {
-  const {
-    categoryId,
-    page,
-    limit,
-    hasDiscount,
-    inStock,
-    minPrice,
-    maxPrice,
-    sort,
-    keyword,
-    skip,
-  } = query;
-
-  const where: Prisma.ProductWhereInput = { isActive: true };
-
-  if (categoryId && isValidId(categoryId)) {
-    where.categoryId = categoryId;
-  }
-
-  if (hasDiscount !== undefined) {
-    where.discountPercent = hasDiscount ? { gt: 0 } : 0;
-  }
-
-  if (inStock !== undefined) {
-    where.stockCount = { gt: 0 };
-  }
-
-  if (minPrice !== undefined || maxPrice !== undefined) {
-    where.salePrice = {
-      ...(minPrice !== undefined ? { gte: minPrice } : {}),
-      ...(maxPrice !== undefined ? { lte: maxPrice } : {}),
-    };
-  }
-
-  if (keyword) {
-    where.OR = [
-      { name: { contains: keyword, mode: 'insensitive' } },
-      { description: { contains: keyword, mode: 'insensitive' } },
-    ];
-  }
-
-  type SortOption =
-    'best-match' | 'price-low' | 'price-high' | 'highest-rating';
-
-  const sortMap: Record<SortOption, Prisma.ProductOrderByWithRelationInput> = {
-    'best-match': { createdAt: 'desc' },
-    'price-low': { salePrice: 'asc' },
-    'price-high': { salePrice: 'desc' },
-    'highest-rating': { ratingAverage: 'desc' },
-  };
-
+  const { categoryId, page, limit, hasDiscount, inStock, minPrice, maxPrice, sort, keyword, skip } = query;
+  const conditions = [eq(products.isActive, true)];
+  if (categoryId && isValidId(categoryId)) conditions.push(eq(products.categoryId, categoryId));
+  if (hasDiscount !== undefined) conditions.push(hasDiscount ? gt(products.discountPercent, 0) : eq(products.discountPercent, 0));
+  if (inStock !== undefined) conditions.push(gt(products.stockCount, 0));
+  if (minPrice !== undefined) conditions.push(gte(products.salePrice, minPrice));
+  if (maxPrice !== undefined) conditions.push(lte(products.salePrice, maxPrice));
+  if (keyword) conditions.push(or(ilike(products.name, `%${keyword}%`), ilike(products.description, `%${keyword}%`))!);
   const effectiveSkip = skip ?? (page - 1) * limit;
-
-  const [products, total] = await Promise.all([
-    prisma.product.findMany({
-      where,
-      orderBy: sortMap[sort],
-      skip: effectiveSkip,
-      take: limit,
-      select: PRODUCT_LIST_SELECT,
-    }),
-    prisma.product.count({ where }),
+  const orderBy = sort === 'price-low' ? asc(products.salePrice) : sort === 'price-high' ? desc(products.salePrice) : sort === 'highest-rating' ? desc(products.ratingAverage) : desc(products.createdAt);
+  const [rows, totalRows] = await Promise.all([
+    db.select({ ...productListColumns, category: categoryShape }).from(products).leftJoin(categories, eq(products.categoryId, categories._id)).where(and(...conditions)).orderBy(orderBy).offset(effectiveSkip).limit(limit),
+    db.select({ total: count() }).from(products).where(and(...conditions)),
   ]);
-
-  const totalPages = Math.ceil(total / limit);
-
-  return {
-    products,
-    pagination: {
-      page,
-      limit,
-      total,
-      totalPages,
-      hasNextPage: effectiveSkip + limit < total,
-      hasPrevPage: page > 1,
-    },
-  };
+  const total = totalRows[0]?.total ?? 0;
+  return { products: rows, pagination: { page, limit, total, totalPages: Math.ceil(total / limit), hasNextPage: effectiveSkip + limit < total, hasPrevPage: page > 1 } };
 };
 
-export const getDealsService = async (query: GetDealsInput) => {
-  const { limit } = query;
-
-  const products = await prisma.product.findMany({
-    where: {
-      isActive: true,
-      discountPercent: { gt: 0 },
-      stockCount: { gt: 0 },
-    },
-    orderBy: { discountPercent: 'desc' },
-    take: limit,
-    select: {
-      _id: true,
-      name: true,
-      slug: true,
-      images: true,
-      originalPrice: true,
-      salePrice: true,
-      discountPercent: true,
-      discountLabel: true,
-      unit: true,
-      ratingAverage: true,
-      reviewCount: true,
-    },
-  });
-
-  return { products };
+export const getDealsService = async ({ limit }: GetDealsInput) => {
+  const rows = await db.select({ _id: products._id, name: products.name, slug: products.slug, images: products.images, originalPrice: products.originalPrice, salePrice: products.salePrice, discountPercent: products.discountPercent, discountLabel: products.discountLabel, unit: products.unit, ratingAverage: products.ratingAverage, reviewCount: products.reviewCount }).from(products).where(and(eq(products.isActive, true), gt(products.discountPercent, 0), gt(products.stockCount, 0))).orderBy(desc(products.discountPercent)).limit(limit);
+  return { products: rows };
 };
 
-export const getProductBySlugService = async ({
-  slug,
-}: GetProductBySlugInput) => {
-  const product = await prisma.product.findFirst({
-    where: { slug, isActive: true },
-    select: {
-      _id: true,
-      name: true,
-      slug: true,
-      images: true,
-      description: true,
-      originalPrice: true,
-      salePrice: true,
-      unit: true,
-      discountPercent: true,
-      discountLabel: true,
-      stockCount: true,
-      ratingAverage: true,
-      reviewCount: true,
-      categoryId: true,
-      createdAt: true,
-      category: { select: { _id: true, name: true, slug: true } },
-    },
-  });
-
+export const getProductBySlugService = async ({ slug }: GetProductBySlugInput) => {
+  const [product] = await db.select({ _id: products._id, name: products.name, slug: products.slug, images: products.images, description: products.description, originalPrice: products.originalPrice, salePrice: products.salePrice, unit: products.unit, discountPercent: products.discountPercent, discountLabel: products.discountLabel, stockCount: products.stockCount, ratingAverage: products.ratingAverage, reviewCount: products.reviewCount, categoryId: products.categoryId, createdAt: products.createdAt, category: categoryShape }).from(products).leftJoin(categories, eq(products.categoryId, categories._id)).where(and(eq(products.slug, slug), eq(products.isActive, true))).limit(1);
   if (!product) throw new NotFoundException('Product not found');
-
-  const relatedProducts = await prisma.product.findMany({
-    where: {
-      categoryId: product.categoryId,
-      isActive: true,
-      slug: { not: slug },
-    },
-    orderBy: { createdAt: 'desc' },
-    take: 6,
-    select: {
-      _id: true,
-      name: true,
-      slug: true,
-      images: true,
-      originalPrice: true,
-      salePrice: true,
-      discountPercent: true,
-      discountLabel: true,
-      ratingAverage: true,
-      reviewCount: true,
-    },
-  });
-
+  const relatedProducts = await db.select({ _id: products._id, name: products.name, slug: products.slug, images: products.images, originalPrice: products.originalPrice, salePrice: products.salePrice, discountPercent: products.discountPercent, discountLabel: products.discountLabel, ratingAverage: products.ratingAverage, reviewCount: products.reviewCount }).from(products).where(and(eq(products.categoryId, product.categoryId), eq(products.isActive, true), ne(products.slug, slug))).orderBy(desc(products.createdAt)).limit(6);
   return { product, relatedProducts };
 };
 
-export const getProductReviewsService = async ({
-  slug,
-  page,
-  limit,
-}: GetProductReviewsInput) => {
-  const product = await prisma.product.findFirst({
-    where: { slug, isActive: true },
-    select: { _id: true },
-  });
-
+export const getProductReviewsService = async ({ slug, page, limit }: GetProductReviewsInput) => {
+  const [product] = await db.select({ _id: products._id }).from(products).where(and(eq(products.slug, slug), eq(products.isActive, true))).limit(1);
   if (!product) throw new NotFoundException('Product not found');
-
-  const productId = product._id;
-  const skip = (page - 1) * limit;
-
-  const [reviews, total, ratingAgg] = await Promise.all([
-    prisma.review.findMany({
-      where: { productId },
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: limit,
-      include: {
-        user: { select: { name: true, avatar: true } },
-      },
-    }),
-    prisma.review.count({ where: { productId } }),
-    prisma.review.groupBy({
-      by: ['rating'],
-      where: { productId },
-      _count: { rating: true },
-      orderBy: { rating: 'desc' },
-    }),
+  const offset = (page - 1) * limit;
+  const [reviewRows, totalRows, ratingAgg] = await Promise.all([
+    db.select({ _id: reviews._id, rating: reviews.rating, comment: reviews.comment, createdAt: reviews.createdAt, user: { name: users.name, avatar: users.avatar } }).from(reviews).leftJoin(users, eq(reviews.userId, users._id)).where(eq(reviews.productId, product._id)).orderBy(desc(reviews.createdAt)).offset(offset).limit(limit),
+    db.select({ total: count() }).from(reviews).where(eq(reviews.productId, product._id)),
+    db.select({ rating: reviews.rating, count: count() }).from(reviews).where(eq(reviews.productId, product._id)).groupBy(reviews.rating).orderBy(desc(reviews.rating)),
   ]);
-
   const breakdownMap: Record<number, number> = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
-  for (const { rating, _count } of ratingAgg) {
-    breakdownMap[rating] = _count.rating;
-  }
-
-  const ratingBreakdown = [5, 4, 3, 2, 1].map((rating) => ({
-    rating,
-    count: breakdownMap[rating],
-  }));
-
-  const totalPages = Math.ceil(total / limit);
-
-  return {
-    reviews,
-    ratingBreakdown,
-    pagination: {
-      page,
-      limit,
-      total,
-      totalPages,
-      hasNextPage: skip + limit < total,
-      hasPrevPage: page > 1,
-    },
-  };
+  for (const row of ratingAgg) breakdownMap[row.rating] = row.count;
+  const total = totalRows[0]?.total ?? 0;
+  return { reviews: reviewRows, ratingBreakdown: [5,4,3,2,1].map((rating) => ({ rating, count: breakdownMap[rating] })), pagination: { page, limit, total, totalPages: Math.ceil(total / limit), hasNextPage: offset + limit < total, hasPrevPage: page > 1 } };
 };
 
-export const createProductService = async (
-  userId: string,
-  data: CreateProductInput,
-) => {
+export const createProductService = async (userId: string, data: CreateProductInput) => {
   const { categoryId } = data;
-
-  if (!isValidId(categoryId)) {
-    throw new BadRequestException('Invalid category ID');
-  }
-
-  const category = await prisma.category.findUnique({
-    where: { _id: categoryId },
-  });
-  if (!category) {
-    throw new BadRequestException('Category not found');
-  }
-
-  // Mirrors the old Mongoose pre-validate hooks on ProductModel: derive the
-  // slug from the name, and compute salePrice from originalPrice/discount.
+  if (!isValidId(categoryId)) throw new BadRequestException('Invalid category ID');
+  const [category] = await db.select().from(categories).where(eq(categories._id, categoryId)).limit(1);
+  if (!category) throw new BadRequestException('Category not found');
   const slug = slugify(data.name, { lower: true, strict: true });
-  const salePrice =
-    data.discountPercent > 0
-      ? calculateSalePrice(data.originalPrice, data.discountPercent)
-      : data.originalPrice;
-
-  const product = await prisma.product.create({
-    data: {
-      ...data,
-      slug,
-      salePrice,
-      userId,
-      categoryId,
-    },
-  });
-
+  const salePrice = data.discountPercent > 0 ? calculateSalePrice(data.originalPrice, data.discountPercent) : data.originalPrice;
+  const [product] = await db.insert(products).values({ ...data, slug, salePrice, userId, categoryId }).returning();
   return product;
 };
 
-export const getProductsForAdminService = async (
-  query: GetProductsForAdminInput,
-) => {
-  const { page, limit } = query;
-  const skip = (page - 1) * limit;
-
-  const [products, total] = await Promise.all([
-    prisma.product.findMany({
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: limit,
-      include: {
-        category: { select: { _id: true, name: true, slug: true } },
-      },
-    }),
-    prisma.product.count(),
+export const getProductsForAdminService = async ({ page, limit }: GetProductsForAdminInput) => {
+  const offset = (page - 1) * limit;
+  const [rows, totalRows] = await Promise.all([
+    db.select({ ...productListColumns, description: products.description, isActive: products.isActive, createdAt: products.createdAt, updatedAt: products.updatedAt, category: categoryShape }).from(products).leftJoin(categories, eq(products.categoryId, categories._id)).orderBy(desc(products.createdAt)).offset(offset).limit(limit),
+    db.select({ total: count() }).from(products),
   ]);
-
-  const totalPages = Math.ceil(total / limit);
-
-  return {
-    products,
-    pagination: {
-      page,
-      limit,
-      total,
-      totalPages,
-      hasNextPage: skip + limit < total,
-      hasPrevPage: page > 1,
-    },
-  };
+  const total = totalRows[0]?.total ?? 0;
+  return { products: rows, pagination: { page, limit, total, totalPages: Math.ceil(total / limit), hasNextPage: offset + limit < total, hasPrevPage: page > 1 } };
 };
